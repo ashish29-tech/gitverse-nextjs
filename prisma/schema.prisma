@@ -240,7 +240,6 @@ model Branch {
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
   @@unique([repositoryId, name])
-  @@index([repositoryId])
   @@map("branches")
 }
 
@@ -324,7 +323,6 @@ model Contributor {
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
   @@unique([repositoryId, email])
-  @@index([repositoryId])
   @@map("contributors")
 }
 
@@ -340,6 +338,5 @@ model Language {
   createdAt    DateTime   @default(now()) @map("created_at")
 
   @@unique([repositoryId, name])
-  @@index([repositoryId])
   @@map("languages")
 }
