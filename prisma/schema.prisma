@@ -146,7 +146,6 @@ model Session {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@index([expires])
   @@map("sessions")
 }
 
