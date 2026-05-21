@@ -325,12 +325,12 @@ export default function Dashboard() {
                 </div>
               ) : recentRepositories.length === 0 ? (
                 <EmptyState
-  icon={GitBranch}
-  title="No repositories yet"
-  description="Start by importing a GitHub repository to explore commits, contributors, code structure, and repository insights."
-  actionLabel="Analyze Repository"
-  onAction={() => router.push("/analyze")}
-/>
+                 icon={GitBranch}
+                 title="No repositories yet"
+                 description="Start by importing a GitHub repository to explore commits, contributors, code structure, and repository insights."
+                 actionLabel="Analyze Repository"
+                 onAction={() => router.push("/analyze")}
+                />
               ) : (
                 <div className="space-y-3">
                   {recentRepositories.map((repo) => (
