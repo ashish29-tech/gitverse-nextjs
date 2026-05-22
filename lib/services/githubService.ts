@@ -175,9 +175,9 @@ export class GitHubService {
         const isRateLimit = status === 429 || status === 403;
         if (isRateLimit) {
           const rateLimitRemaining = error.response?.headers?.["x-ratelimit-remaining"];
-          if (status === 429 || rateLimitRemaining === "0") {
+          const retryAfterHeader = error.response?.headers?.["retry-after"];
+          if (status === 429 || rateLimitRemaining === "0" || retryAfterHeader) {
             if (config.retryCount >= 3) {
-              const retryAfterHeader = error.response?.headers?.["retry-after"];
               const resetHeader = error.response?.headers?.["x-ratelimit-reset"];
               let retrySeconds = 60;
 
@@ -196,9 +196,10 @@ export class GitHubService {
           }
         }
 
-        const retryStatusCodes = [409, 502, 503, 504];
+        const retryStatusCodes = [409, 500, 502, 503, 504];
         if (
-          (status && retryableCodes.includes(status)) ||
+          (status && retryStatusCodes.includes(status)) ||
+          status === 0 ||
           error.code === "ECONNABORTED" ||
           error.code === "ECONNRESET" ||
           error.code === "ETIMEDOUT" ||
