@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireAuth } from "@/lib/middleware";
+import { sanitizeErrorMessage } from "@/lib/utils/rateLimit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
