@@ -74,7 +74,17 @@ export async function GET(request: NextRequest) {
 
     const rawLimit = parseInt(searchParams.get("limit") ?? "10", 10);
     const limit = Math.min(isNaN(rawLimit) || rawLimit < 1 ? 10 : rawLimit, 50);
-    const cursor = searchParams.get("cursor") ?? undefined;
+    const rawCursor = searchParams.get("cursor");
+
+// Validate cursor — must be a positive integer string
+if (rawCursor !== null && !/^\d+$/.test(rawCursor)) {
+  return NextResponse.json(
+    { error: "Invalid cursor format" },
+    { status: 400 }
+  );
+}
+
+const cursor = rawCursor ?? undefined;
 
     const rows = await getRepositories({
       userId: user.userId,
