@@ -1,9 +1,43 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useRouter, useParams } from "next/navigation";
+import { AnalysisDetailSkeleton } from "@/components/analysis/AnalysisDetailSkeleton";
+import { AnalysisFailureState } from "@/components/analysis/AnalysisFailureState";
 
 export default function AnalysisJobPage() {
   const router = useRouter();
+  const params = useParams();
+
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!params?.jobId) return;
+
+    const token = localStorage.getItem("gitverse_token");
+
+    fetch(`/api/analysis-jobs/${params.jobId}`, {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null);
+          throw new Error(errData?.error || "Failed to load analysis");
+        }
+        return res.json();
+      })
+      .then(setData)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [params?.jobId]);
+
+  if (loading) return <AnalysisDetailSkeleton />;
+
+  if (error) return <AnalysisFailureState message={error} />;
 
   return (
     <div style={{
@@ -19,7 +53,7 @@ export default function AnalysisJobPage() {
         No Analysis Jobs Found
       </h2>
       <p style={{ color: "#888", marginBottom: "1.5rem" }}>
-        You haven&apos;t created any analysis jobs yet.
+        {data ? "Analysis job details will appear here." : "You haven't created any analysis jobs yet."}
       </p>
       <button
         onClick={() => router.push("/analyze")}
