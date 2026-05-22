@@ -63,7 +63,23 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    return NextResponse.json({ repos: toJsonSafe(repos) }, { status: 200 });
+    if (repoFullName && repos.length === 0) {
+      return NextResponse.json(
+        { error: "Repository not found" },
+        { status: 404 },
+      );
+    }
+
+    return NextResponse.json(
+      { repos: toJsonSafe(repos) },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control":
+            "no-store, no-cache, must-revalidate, proxy-revalidate",
+        },
+      },
+    );
   } catch (error: any) {
     console.error("GitHub PR reviews error:", error);
     if (isHttpError(error)) {
