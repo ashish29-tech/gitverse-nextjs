@@ -3,18 +3,23 @@ import bcrypt from "bcryptjs";
 import prisma from "@/lib/prisma";
 import { generateToken } from "@/lib/auth";
 
+import { parseJsonBody, validateEmail, validatePassword } from "@/lib/validateAuth";
+import { badRequestResponse } from "@/lib/middleware";
+
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { email, password } = body;
+    const parsed = await parseJsonBody(request);
+    if ("error" in parsed) return badRequestResponse(parsed.error);
+    const { body } = parsed;
 
-    // Validation
-    if (!email || !password) {
-      return NextResponse.json(
-        { error: "Email and password are required" },
-        { status: 400 }
-      );
-    }
+    const emailCheck = validateEmail(body.email);
+    if (!emailCheck.valid) return badRequestResponse(emailCheck.error!);
+
+    const passwordCheck = validatePassword(body.password);
+    if (!passwordCheck.valid) return badRequestResponse(passwordCheck.error!);
+
+    const email = body.email as string;
+    const password = body.password as string;
 
     // Find user
     const user = await prisma.user.findUnique({
@@ -77,7 +82,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Login error:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "An unexpected error occurred" },
       { status: 500 }
     );
   }
