@@ -7,8 +7,10 @@ import { generateToken } from "@/lib/auth";
 export async function POST(request: NextRequest) {
   try {
     // 1. EXTRACT IP AND CHECK RATE LIMIT FIRST
-    const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown-ip';
-    const rateLimitResult = checkRateLimit(ip);
+        const forwardedFor = request.headers.get('x-forwarded-for');
+        const ip = forwardedFor?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'unknown-ip';
+        
+        const rateLimitResult = checkRateLimit(ip);
 
     if (!rateLimitResult.success) {
       return NextResponse.json(
