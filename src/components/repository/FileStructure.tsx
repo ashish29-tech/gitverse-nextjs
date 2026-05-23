@@ -33,6 +33,7 @@ interface FileChange {
   path: string;
   additions?: number;
   deletions?: number;
+  type?: string;
 }
 
 interface CommitData {
