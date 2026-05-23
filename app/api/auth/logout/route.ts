@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUser } from "@/lib/middleware";
+import { getAuthUser, sanitizeError } from "@/lib/middleware";
 
 /**
  * Handles logout requests by validating the authorization header
@@ -32,8 +32,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const token = parts[1];
-
     const user = await getAuthUser(request);
 
     if (!user) {
@@ -45,10 +43,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       message: "Logged out successfully",
-      token,
     });
   } catch (error) {
-    console.error("Logout error:", error);
+    console.error("Logout error:", sanitizeError(error));
 
     return NextResponse.json(
       { error: "Failed to process logout request" },
