@@ -36,7 +36,8 @@ const generateCommitData = (commits: HeatmapCommit[], now: Date): CommitData[] =
   // Count commits by date
   commits?.forEach((commit: HeatmapCommit) => {
     const dateVal = commit.committedAt || commit.createdAt;
-    const date = dateVal ? new Date(dateVal) : new Date();
+    if (!dateVal) return;
+    const date = new Date(dateVal);
     const dateStr = date.toISOString().split("T")[0];
     commitsByDate.set(dateStr, (commitsByDate.get(dateStr) || 0) + 1);
   });
