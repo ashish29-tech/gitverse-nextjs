@@ -335,6 +335,9 @@ model Language {
   createdAt    DateTime   @default(now()) @map("created_at")
 
   @@unique([repositoryId, name])
+  // Index for fast language lookup per repository
+  @@index([repositoryId])
+  
   @@map("languages")
   @@index([repositoryId])
 }
