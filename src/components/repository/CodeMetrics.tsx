@@ -75,16 +75,21 @@ export function CodeMetrics({ repository }: CodeMetricsProps) {
 
   const totalFiles = repository?.files?.length || 0;
   
-  const sourceFilesList = repository?.files?.filter((f: any) =>
-    f.path?.match(/\.(ts|tsx|js|jsx|py|java|go|rs)$/i)
-  ) || [];
-  const sourceFiles = sourceFilesList.length;
+  const testFilePattern = /\.(test|spec)\.(ts|tsx|js|jsx)$/i;
+  const sourceFilePattern = /\.(ts|tsx|js|jsx|py|java|go|rs)$/i;
 
+  // 1. Filter test files first
   const testFilesList = repository?.files?.filter((f: any) =>
-    f.path?.match(/\.(test|spec)\.(ts|tsx|js|jsx)$/i)
+    testFilePattern.test(f.path || "")
   ) || [];
   const testFiles = testFilesList.length;
   const hasTests = testFiles > 0;
+
+  // 2. Filter source files but EXCLUDE matches from the test pattern
+  const sourceFilesList = repository?.files?.filter((f: any) =>
+    sourceFilePattern.test(f.path || "") && !testFilePattern.test(f.path || "")
+  ) || [];
+  const sourceFiles = sourceFilesList.length;
 
   const configFiles =
     repository?.files?.filter((f: any) =>
