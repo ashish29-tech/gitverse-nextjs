@@ -151,21 +151,44 @@
     box-shadow: 0 0 20px hsl(var(--accent) / 0.3);
   }
 
-  /* Horizontal marquee (for feature cards, logos, etc.) */
+  /* Infinite Carousel */
   .marquee {
     position: relative;
     overflow: hidden;
+    width: 100%;
+    padding-block: 1rem;
+    --marquee-duration: 20s;
+  }
+
+  .marquee::before,
+  .marquee::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    width: 120px;
+    height: 100%;
+    z-index: 10;
+    pointer-events: none;
+  }
+
+  .marquee::before {
+    left: 0;
+    background: linear-gradient(to right, hsl(var(--background)), transparent);
+  }
+
+  .marquee::after {
+    right: 0;
+    background: linear-gradient(to left, hsl(var(--background)), transparent);
   }
 
   .marquee__track {
     display: flex;
+    align-items: stretch;
+    gap: 1.5rem;
     width: max-content;
+    flex-wrap: nowrap;
     will-change: transform;
-    animation: marquee-x var(--marquee-duration, 28s) linear infinite;
-  }
-
-  .marquee--pause-on-hover:hover .marquee__track {
-    animation-play-state: paused;
+    animation: carousel-infinite var(--marquee-duration) linear infinite;
   }
 
   /* Heatmap pulse background (activity hotspots) */
@@ -190,10 +213,32 @@
   }
 
   @media (min-width: 768px) {
+    .feature-card {
+      width: 280px;
+      min-width: 280px;
+    }
+
+    .marquee__track {
+      gap: 1rem;
+      animation-duration: 26s;
+    }
+
+    .marquee::before,
+    .marquee::after {
+      width: 50px;
+    }
+
     .heatmap-bg__grid {
       grid-template-columns: repeat(14, 12px);
       grid-auto-rows: 12px;
       gap: 10px;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .feature-card {
+      width: 85vw;
+      min-width: 85vw;
     }
   }
 
@@ -387,18 +432,25 @@
 
   /* Feature cards: lift + glow */
   .feature-card {
+    width: 360px;
+    min-width: 360px;
+    border-radius: 1.5rem;
+
     transition:
-      transform 220ms ease,
-      box-shadow 220ms ease,
-      border-color 220ms ease,
-      background-color 220ms ease;
+      transform 260ms ease,
+      box-shadow 260ms ease,
+      border-color 260ms ease,
+      background-color 260ms ease;
+
+    flex-shrink: 0;
   }
 
   .feature-card:hover {
-    transform: translateY(-4px);
+    transform: translateY(-6px);
+
     box-shadow:
-      0 12px 35px hsl(var(--primary) / 0.12),
-      0 0 0 1px hsl(var(--primary) / 0.16);
+      0 14px 40px hsl(var(--primary) / 0.16),
+      0 0 0 1px hsl(var(--primary) / 0.18);
   }
 
   /* AI typing demo */
@@ -475,12 +527,12 @@
   }
 }
 
-@keyframes marquee-x {
-  from {
+@keyframes carousel-infinite {
+  0% {
     transform: translateX(0);
   }
-  to {
-    transform: translateX(-50%);
+  100% {
+    transform: translateX(calc(-50% - 0.75rem));
   }
 }
 

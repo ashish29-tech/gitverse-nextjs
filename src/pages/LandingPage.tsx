@@ -563,15 +563,12 @@ export default function LandingPage() {
             </p>
           </div>
 
-          <div className="marquee marquee--pause-on-hover reveal" data-reveal>
-            <div
-              className="marquee__track gap-6 py-2"
-              style={{ ["--marquee-duration"]: "34s" } as React.CSSProperties}
-            >
+          <div className="marquee reveal" data-reveal style={{ ["--marquee-duration" as any]: "22s" }}>
+            <div className="marquee__track">
               {[...features, ...features].map((feature, index) => (
                 <Card
                   key={`${feature.title}-${index}`}
-                  className="glass feature-card group shrink-0 w-[320px] md:w-[360px]"
+                  className="glass feature-card group"
                 >
                   <CardHeader>
                     <div className="w-12 h-12 rounded-lg bg-gradient-primary flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
