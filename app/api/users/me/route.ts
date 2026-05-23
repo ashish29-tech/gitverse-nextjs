@@ -55,7 +55,15 @@ export async function DELETE(request: NextRequest) {
       where: { id: user.userId },
     });
 
-    return NextResponse.json({ message: "Account deleted" });
+    const response = NextResponse.json({ message: "Account deleted" });
+
+    // Clear active session cookies to invalidate server/client session cookies immediately
+    response.cookies.delete("next-auth.session-token");
+    response.cookies.delete("__Secure-next-auth.session-token");
+    response.cookies.delete("next-auth.callback-url");
+    response.cookies.delete("next-auth.csrf-token");
+
+    return response;
   } catch (error: any) {
     console.error("Error deleting account:", sanitizeError(error));
     if (error?.code === "P2025") {
