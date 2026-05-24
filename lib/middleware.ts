@@ -18,6 +18,7 @@ export async function getAuthUser(
 ): Promise<JWTPayload | null> {
   const authHeader = request.headers.get("authorization");
   let userPayload: JWTPayload | null = null;
+  let isBearerAuth = false;
 
   // 1) Existing JWT auth (Authorization: Bearer ...)
   if (authHeader && authHeader.startsWith("Bearer ")) {
@@ -49,7 +50,7 @@ export async function getAuthUser(
       ) {
         return null;
       }
-
+      isBearerAuth = true;
       userPayload = payload;
     }
   }
@@ -80,20 +81,23 @@ export async function getAuthUser(
   if (!userPayload) return null;
 
   // 3) Verify user existence in database
-  try {
-    const userExists = await prisma.user.findUnique({
-      where: { id: userPayload.userId },
-      select: { id: true },
-    });
 
-    if (!userExists) {
+  if (!isBearerAuth) {
+    try {
+      const userExists = await prisma.user.findUnique({
+        where: { id: userPayload.userId },
+        select: { id: true },
+      });
+
+      if (!userExists) {
+        return null;
+      }
+    } catch (error) {
+      console.error("Database check failed in auth middleware:", error);
       return null;
     }
-  } catch (error) {
-    console.error("Database check failed in auth middleware:", error);
-    return null;
   }
-
+  
   return userPayload;
 }
 

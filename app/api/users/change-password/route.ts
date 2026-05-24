@@ -69,12 +69,12 @@ export async function POST(request: NextRequest) {
           passwordChangedAt: new Date(),
         },
       }),
-    prisma.session.deleteMany({
-      where: {
-        userId: user.userId,
-      },
-    }),
-  ]);
+      prisma.session.deleteMany({
+        where: {
+          userId: user.userId,
+        },
+      }),
+    ]);
 
     return NextResponse.json({ message: "Password changed successfully" });
   } catch (error: any) {
