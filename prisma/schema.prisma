@@ -134,6 +134,8 @@ model Account {
   @@index([userId])
   @@unique([provider, providerAccountId])
   @@map("accounts")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 }
 
 model Session {
@@ -353,5 +355,4 @@ model Language {
   @@index([repositoryId])
   
   @@map("languages")
-  @@index([repositoryId])
 }
