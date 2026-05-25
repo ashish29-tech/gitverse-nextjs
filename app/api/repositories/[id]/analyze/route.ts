@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isHttpError, requireAuth } from "@/lib/middleware";
 import { repositoryService } from "@/lib/services/repositoryService";
 import { analysisJobService } from "@/lib/services/analysisJobService";
-
+import { apiError } from "@/lib/api-error";
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -12,20 +12,14 @@ export async function POST(
     const id = parseInt(params.id);
 
     if (isNaN(id)) {
-      return NextResponse.json(
-        { error: "Invalid repository ID" },
-        { status: 400 }
-      );
+      return apiError(400, "Invalid repository ID");
     }
 
     // Verify ownership
     const repository = await repositoryService.getRepository(id, user.userId);
 
     if (!repository) {
-      return NextResponse.json(
-        { error: "Repository not found" },
-        { status: 404 }
-      );
+      return apiError(404, "Repository not found");
     }
 
     const job = await analysisJobService.createRepositoryAnalysisJob({
@@ -40,14 +34,8 @@ export async function POST(
   } catch (error: any) {
     console.error("Analyze repository error:", error);
     if (isHttpError(error)) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: error.status }
-      );
+     return apiError(error.status, error.message);
     }
-    return NextResponse.json(
-      { error: "Failed to start analysis" },
-      { status: 500 }
-    );
+    return apiError(500, "Failed to start analysis");
   }
 }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isHttpError, requireAuth } from "@/lib/middleware";
 import prisma from "@/lib/prisma";
 import { repositoryService } from "@/lib/services/repositoryService";
-
+import { apiError } from "@/lib/api-error";
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -12,19 +12,13 @@ export async function GET(
     const id = parseInt(params.id);
 
     if (isNaN(id)) {
-      return NextResponse.json(
-        { error: "Invalid repository ID" },
-        { status: 400 }
-      );
+      return apiError(400, "Invalid repository ID");
     }
 
     const repository = await repositoryService.getRepository(id, user.userId);
 
     if (!repository) {
-      return NextResponse.json(
-        { error: "Repository not found" },
-        { status: 404 }
-      );
+      return apiError(404, "Repository not found");
     }
 
     const latestJob = await prisma.analysisJob.findFirst({
@@ -87,19 +81,13 @@ export async function DELETE(
     console.error("Delete repository error:", error);
 
     if (isHttpError(error)) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: error.status }
-      );
-    }
+  return apiError(error.status, error.message);
+}
 
     if (error.message === "Repository not found") {
       return NextResponse.json({ error: error.message }, { status: 404 });
     }
 
-    return NextResponse.json(
-      { error: "Failed to delete repository" },
-      { status: 500 }
-    );
+    return apiError(500, "Failed to get repository");
   }
 }

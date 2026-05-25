@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import prisma from "@/lib/prisma";
 import { generateToken } from "@/lib/auth";
+import { apiError } from "@/lib/api-error";
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,10 +11,7 @@ export async function POST(request: NextRequest) {
 
     // Validation
     if (!email || !password) {
-      return NextResponse.json(
-        { error: "Email and password are required" },
-        { status: 400 }
-      );
+      return apiError(400, "Email and password are required");
     }
 
     // Find user
@@ -22,10 +20,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!user) {
-      return NextResponse.json(
-        { error: "Invalid email or password" },
-        { status: 401 }
-      );
+      return apiError(401, "Invalid email or password");
     }
 
     // Security: never allow password login for Google-only accounts.
@@ -37,30 +32,23 @@ export async function POST(request: NextRequest) {
         })) > 0;
 
       if (hasGoogleAccount) {
-        return NextResponse.json(
-          { error: "Email already exists. Please sign in with Google." },
-          { status: 401 }
-        );
+        return apiError(
+  401,
+  "Email already exists. Please sign in with Google."
+);
       }
     }
 
     // Verify password
     const passwordHash = user.passwordHash || (user as any).password;
     if (!passwordHash) {
-      return NextResponse.json(
-        { error: "Invalid email or password" },
-        { status: 401 }
-      );
-    }
-
+  return apiError(401, "Invalid email or password");
+}
     const isValidPassword = await bcrypt.compare(password, passwordHash);
 
     if (!isValidPassword) {
-      return NextResponse.json(
-        { error: "Invalid email or password" },
-        { status: 401 }
-      );
-    }
+  return apiError(401, "Invalid email or password");
+}
 
     // Generate JWT token
     const token = generateToken({ userId: user.id, email: user.email });
@@ -76,9 +64,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("Login error:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+   return apiError(500, "Internal server error");
   }
 }
