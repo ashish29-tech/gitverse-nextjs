@@ -1,5 +1,4 @@
-import { describe, it, expect } from "vitest";
-import { toJsonSafe } from "./jsonSafe";
+import { toJsonSafe } from "../utils/jsonSafe";
 
 describe("toJsonSafe – primitives", () => {
   it("passes through null and undefined", () => {
