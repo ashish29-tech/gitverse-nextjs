@@ -5,12 +5,14 @@ import { analysisJobService } from "@/lib/services/analysisJobService";
 
 const MAX_KICK_ENTRIES = 1000;
 const lastKickAtByJobId = new Map<string, number>();
+const MAX_KICK_ENTRIES = 1000;
 
 function kickLocalRunner(request: NextRequest, jobId: string) {
   if (process.env.NODE_ENV === "production") return;
 
   const now = Date.now();
   const lastKickAt = lastKickAtByJobId.get(jobId) ?? 0;
+
 
   if (now - lastKickAt < 5000) return;
 
@@ -19,6 +21,13 @@ function kickLocalRunner(request: NextRequest, jobId: string) {
     const firstKey = lastKickAtByJobId.keys().next().value;
     lastKickAtByJobId.delete(firstKey);
   }
+
+
+  if (now - lastKickAt < 5000) return; // throttle (best-effort)
+  if (lastKickAtByJobId.size >= MAX_KICK_ENTRIES) {
+  const firstKey = lastKickAtByJobId.keys().next().value;
+  lastKickAtByJobId.delete(firstKey);
+}
 
   lastKickAtByJobId.set(jobId, now);
 
