@@ -8,7 +8,7 @@
 
 ## System Requirements
 
-- **Node.js 22.x** is officially supported. See [Supported Node Version](README.md#supported-node-version) in README for details.
+- **Node.js 22.x** is required. See [Supported Node Version](README.md#supported-node-version) in README for details.
 
 ## Immediate Next Steps
 
