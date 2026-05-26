@@ -514,6 +514,37 @@ export class RepositoryService {
       // Languages to ignore (config/data formats, not actual code)
       const ignoredLanguages = ["JSON", "YAML", "Markdown", "TOML", "CSV"];
 
+      // Clean up existing languages before inserting fresh data,
+      // otherwise re-analysis would leave stale records and skip
+      // updates on metrics that may have changed.
+      try {
+        await prisma.language.deleteMany({
+          where: { repositoryId },
+        });
+      } catch (e: any) {
+        console.error(
+          `Failed to clean up languages for repository ${repositoryId}:`,
+          e.message,
+        );
+      }
+
+      if (languagesWithAdjustedPercentage.length > 0) {
+        try {
+          await prisma.language.createMany({
+            data: languagesWithAdjustedPercentage.map((language) => ({
+              name: language.name,
+              percentage: language.percentage,
+              bytes: language.bytes,
+              lines: language.lines,
+              repositoryId,
+            })),
+          });
+        } catch (e: any) {
+          console.error(
+            `Failed to insert languages for repository ${repositoryId}:`,
+            e.message,
+          );
+        }
       // Filter out ignored languages
       const filteredLanguages = languages.filter(
         (lang) => !ignoredLanguages.includes(lang.name),
