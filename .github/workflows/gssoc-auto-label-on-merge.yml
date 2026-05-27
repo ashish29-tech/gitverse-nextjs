@@ -171,9 +171,26 @@ jobs:
                 }
 
                 // Propagate type labels from PR to issue
-                const typeLabels = labelNames.filter(n => n.startsWith('type:'));
-                for (const tl of typeLabels) {
+                const prTypeLabels = labelNames.filter(n => n.startsWith('type:'));
+                for (const tl of prTypeLabels) {
                   if (!issueLabelNames.includes(tl)) issueLabelsToAdd.push(tl);
+                }
+
+                // ── Copy type/bug/feature labels from ISSUE back to PR ────────
+                // These label prefixes are synced from issue → PR
+                const syncPrefixes = ['type:', 'bug', 'feature', 'enhancement', 'documentation'];
+                const prLabelsToAdd = [];
+                for (const il of issueLabelNames) {
+                  const shouldSync = syncPrefixes.some(prefix => il.startsWith(prefix) || il === prefix);
+                  if (shouldSync && !labelNames.includes(il)) {
+                    prLabelsToAdd.push(il);
+                  }
+                }
+                if (prLabelsToAdd.length > 0) {
+                  await github.rest.issues.addLabels({
+                    owner, repo, issue_number: prNum, labels: prLabelsToAdd,
+                  });
+                  console.log(`🔁 Copied labels [${prLabelsToAdd.join(', ')}] from issue #${issueNum} → PR #${prNum}`);
                 }
 
                 // Mentor label
