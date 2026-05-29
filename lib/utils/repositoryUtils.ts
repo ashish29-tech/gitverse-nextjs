@@ -36,7 +36,9 @@ export function getLanguageColor(language: string): string {
  * File size formatting utilities
  */
 export function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B'
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 1) {
+    return '0 B'
+  }
 
   const k = 1024
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB']
