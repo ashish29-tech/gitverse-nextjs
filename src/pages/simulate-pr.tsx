@@ -362,7 +362,7 @@ export default function PRSimulator() {
         )}
 
         {/* State 2: Simulated Review Results */}
-        {hasCompared && (
+        {hasAnalyzed && (
           <div className="space-y-6">
             <div className="glass border border-border/50 rounded-2xl p-6 relative overflow-hidden">
               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-primary" />
