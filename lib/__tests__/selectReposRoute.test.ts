@@ -1,3 +1,5 @@
+// `jest.mock` factories are hoisted, so these bindings need `var` for
+// initialization from the mocked modules before the route import runs.
 var mockRequireAuth = jest.fn();
 var mockIsHttpError = jest.fn();
 var mockPrisma: any;
@@ -42,8 +44,9 @@ describe("POST /api/integrations/github/select-repos", () => {
     jest.clearAllMocks();
     mockRequireAuth.mockResolvedValue({ userId: 42 });
     mockIsHttpError.mockReturnValue(false);
-    mockPrisma.$transaction.mockImplementation(async (callback) =>
-      callback(mockPrisma),
+    mockPrisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockPrisma) => Promise<unknown>) =>
+        callback(mockPrisma),
     );
   });
 
@@ -98,6 +101,13 @@ describe("POST /api/integrations/github/select-repos", () => {
         installationId: { not: null },
       },
       data: { enabled: true },
+    });
+    expect(mockPrisma.gitHubRepo.updateMany).toHaveBeenNthCalledWith(2, {
+      where: {
+        userId: 42,
+        repoFullName: { notIn: ["owner/repo"] },
+      },
+      data: { enabled: false },
     });
     expect(mockPrisma.gitHubRepo.upsert).not.toHaveBeenCalled();
   });
