@@ -392,15 +392,21 @@ export class GitService {
         refEntries.push({ name, fullName, date });
       }
 
-      // Fire all rev-list --count in parallel so one bad ref doesn't block the rest.
-      const countResults = await Promise.allSettled(
-        refEntries.map((entry) =>
-          this.spawnGit(
-            ["rev-list", "--count", entry.fullName],
-            { timeout: DEFAULT_GIT_TIMEOUT_MS },
-          ).then(({ stdout }) => parseInt(stdout.trim())),
-        ),
-      );
+      // 🔥 FIX: Process in chunks to prevent process bombs on repositories with many branches
+      const countResults: PromiseSettledResult<number>[] = [];
+      const concurrencyLimit = 50;
+      for (let i = 0; i < refEntries.length; i += concurrencyLimit) {
+        const batch = refEntries.slice(i, i + concurrencyLimit);
+        const batchResults = await Promise.allSettled(
+          batch.map((entry) =>
+            this.spawnGit(
+              ["rev-list", "--count", entry.fullName],
+              { timeout: DEFAULT_GIT_TIMEOUT_MS },
+            ).then(({ stdout }) => parseInt(stdout.trim())),
+          ),
+        );
+        countResults.push(...batchResults);
+      }
 
       const branches: BranchData[] = refEntries.map((entry, i) => {
         const result = countResults[i];

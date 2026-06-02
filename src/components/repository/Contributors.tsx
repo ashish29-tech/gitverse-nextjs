@@ -199,6 +199,7 @@ export function Contributors({ repository }: ContributorsProps) {
                     src={contributor.avatar}
                     alt={contributor.name}
                     className="w-12 h-12 rounded-full ring-2 ring-primary/20"
+                    loading="lazy"
                   />
                   {rankBadge && (
                     <div className="absolute -top-1 -right-1 text-lg">
