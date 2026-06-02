@@ -552,12 +552,14 @@ export default function Settings() {
                               src={avatar}
                               alt={name}
                               className="w-full h-full object-cover"
+                              loading="lazy"
                             />
                           ) : user?.avatar ? (
                             <img
                               src={user.avatar}
                               alt={user.name}
                               className="w-full h-full object-cover"
+                              loading="lazy"
                             />
                           ) : (
                             <User className="h-8 w-8 text-primary-foreground" />
