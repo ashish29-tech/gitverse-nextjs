@@ -10,7 +10,24 @@ const DANGEROUS_PATTERNS = [
   /\\/g,            // backslashes (Windows-style)
 ];
 
-const ALLOWED_PATH_SEGMENTS = /^[a-zA-Z0-9._\-\/]+$/;
+const ALLOWED_PATH_SEGMENTS = /^[a-zA-Z0-9._\-\/ ]+$/;
+
+function isSensitiveFile(filePath: string): boolean {
+  const filename = filePath.split("/").pop() || "";
+  const lower = filename.toLowerCase();
+
+  // Block .env files except .env.example
+  if (lower.includes(".env") && !lower.endsWith(".env.example")) {
+    return true;
+  }
+
+  // Block key files and certificate files
+  if (lower.endsWith(".key") || lower.endsWith(".pem") || lower.endsWith("id_rsa")) {
+    return true;
+  }
+
+  return false;
+}
 
 /**
  * Validates a file path for safe use in URL construction.
@@ -26,6 +43,19 @@ function validateFilePath(filePath: string): string | null {
   }
 
   // Check for dangerous patterns
+  if (/\0/.test(filePath)) {
+    return "Null bytes not allowed";
+  }
+
+  if (/\.\./.test(filePath)) {
+    return "Path traversal detected. File path is invalid.";
+  }
+
+  // Check for sensitive files
+  if (isSensitiveFile(filePath)) {
+    return "Access to sensitive files is restricted";
+  }
+
   for (const pattern of DANGEROUS_PATTERNS) {
     if (pattern.test(filePath)) {
       return "File path contains invalid characters";
@@ -35,13 +65,17 @@ function validateFilePath(filePath: string): string | null {
   // Must start with a letter, number, or dot (for relative paths like ./src)
   // but not start with a dot followed by a slash (which is traversal)
   if (filePath.startsWith("/")) {
-    return "File path must not start with /";
+    return "Absolute path not allowed. File path must not start with /";
   }
 
   // Split into segments and validate each
   const segments = filePath.split("/");
-  for (const segment of segments) {
-    if (segment === "" || segment === "." || segment === "..") {
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    if (segment === "" || segment === "..") {
+      return "File path contains disallowed segments";
+    }
+    if (segment === "." && i === 0) {
       return "File path contains disallowed segments";
     }
   }
@@ -75,7 +109,7 @@ function isTextFile(filePath: string): boolean {
     ".json", ".jsonc", ".json5",
     ".md", ".mdx", ".txt", ".rst",
     ".css", ".scss", ".less",
-    ".html", ".htm", ".xml", ".svg",
+    ".html", ".htm", ".xml",
     ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
     ".env", ".env.local", ".env.example",
     ".gitignore", ".gitattributes", ".gitmodules",
@@ -118,7 +152,12 @@ export async function GET(
     const user = await requireAuth(request);
     const id = parseInt(params.id);
     const searchParams = request.nextUrl.searchParams;
-    const filePath = searchParams.get("path");
+    let filePath = searchParams.get("path");
+
+    if (filePath) {
+      filePath = filePath.replace(/#[a-zA-Z0-9_]+$/, "");
+      filePath = filePath.replace(/\?[a-zA-Z0-9_]+=[^?#]*$/, "");
+    }
 
     if (isNaN(id)) {
       return NextResponse.json(
@@ -143,7 +182,7 @@ export async function GET(
     // Reject binary files to prevent data exfiltration
     if (!isTextFile(filePath)) {
       return NextResponse.json(
-        { error: "Only text files are supported for file viewing" },
+        { error: "Binary files and media are not supported. Only text files are supported for file viewing" },
         { status: 400 }
       );
     }
@@ -187,13 +226,28 @@ export async function GET(
 
     const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${encodedPath}`;
 
-    const response = await fetch(rawUrl, {
-      headers: {
-        Accept: "text/plain",
-      },
-      // Limit response size to prevent DoS via huge files
-      signal: AbortSignal.timeout(10000),
-    });
+    let signal: AbortSignal | undefined;
+    let timeoutId: any;
+    const controller = new AbortController();
+
+    if (typeof AbortSignal.timeout === "function") {
+      signal = AbortSignal.timeout(10000);
+    } else {
+      timeoutId = setTimeout(() => controller.abort(), 10000);
+      signal = controller.signal;
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(rawUrl, {
+        headers: {
+          Accept: "text/plain",
+        },
+        signal,
+      });
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -219,6 +273,7 @@ export async function GET(
       );
     }
 
+<<<<<<< HEAD
     const contentLengthHeader = response.headers.get("content-length");
     if (contentLengthHeader) {
       const size = parseInt(contentLengthHeader, 10);
@@ -232,10 +287,9 @@ export async function GET(
       return NextResponse.json({ error: "File exceeds maximum preview size of 5 MB" }, { status: 413 });
     }
 
+=======
+>>>>>>> d669a63 (resolve merge conflicts)
     const content = await response.text();
-    if (content.length > 1024 * 1024) { // 1MB limit
-      return NextResponse.json({ error: "File size exceeds 1MB limit" }, { status: 400 });
-    }
 
     // Double-check content size after reading
     if (content.length > 1024 * 1024) {
