@@ -117,6 +117,20 @@
 }
 
 @layer components {
+  /* Smooth theme transitions for layout wrapper elements */
+  body, 
+  header, 
+  aside, 
+  main,
+  .card,
+  .glass,
+  nav,
+  footer {
+    transition: background-color 300ms cubic-bezier(0.4, 0, 0.2, 1), 
+                border-color 300ms cubic-bezier(0.4, 0, 0.2, 1), 
+                color 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
   .container-custom {
     @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
   }
@@ -667,6 +681,17 @@
     transform: none;
     opacity: 1;
   }
+
+  body, 
+  header, 
+  aside, 
+  main,
+  .card,
+  .glass,
+  nav,
+  footer {
+    transition: none !important;
+  }
 }
 
 @keyframes typing-cursor-blink {
@@ -851,6 +876,18 @@
 /* Reduced motion preference respects animation pause state */
 @media (prefers-reduced-motion: reduce) {
   .marquee__track {
+    animation: none !important;
+  }
+
+  body,
+  header,
+  aside,
+  main,
+  .card,
+  .glass,
+  nav,
+  footer {
+    transition: none !important;
     animation: none !important;
   }
 }

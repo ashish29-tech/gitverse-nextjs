@@ -2,7 +2,7 @@ import "@/lib/env";
 import { ReactNode } from "react";
 import { Metadata } from "next";
 import { Inter, Source_Sans_3 } from "next/font/google";
-import { ThemeProvider } from "@/components/ThemeProvider";
+import { ThemeProvider } from "@/context/ThemeContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { NextAuthProvider } from "@/components/auth/NextAuthProvider";
 import { Toaster } from "@/components/ui/toaster";
@@ -79,7 +79,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           Skip to main content
         </a>
 
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+        <ThemeProvider>
           <NextAuthProvider>
             <AuthProvider>
               <main id="main-content">
