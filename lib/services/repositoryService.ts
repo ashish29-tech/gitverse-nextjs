@@ -8,6 +8,7 @@ import { invalidateGeminiAnalysisCacheForRepository } from "./geminiAnalysisCach
 import { FileChangeType } from "@prisma/client";
 import { repoSyncLimiter } from "../utils/concurrencyLimiter";
 import { withDbRetry } from "../utils/dbRetry";
+import { getGeminiService } from "./geminiService";
 
 function yieldIfHighMemory(threshold?: number): Promise<void> {
   if (threshold === undefined) {
@@ -604,6 +605,128 @@ if (existingRepositoryName) {
         await fs.rm(tempDir, { recursive: true, force: true }).catch(() => null);
       }
     }
+  }
+
+  /**
+   * Generates architecture map iteratively for massive repositories
+   */
+  async generateArchitectureIteratively(
+    repositoryId: number,
+    userId: number,
+    opts?: { onProgress?: RepositoryAnalysisProgressReporter }
+  ) {
+    const repository = await prisma.repository.findFirst({
+      where: { id: repositoryId, userId },
+      include: {
+        files: true,
+        commits: { take: 50 },
+        languages: { take: 20 },
+        contributors: { take: 20 }
+      }
+    });
+
+    if (!repository) {
+      throw new Error("Repository not found");
+    }
+
+    const report = async (update: RepositoryAnalysisProgress) => {
+      if (opts?.onProgress) {
+        try { await opts.onProgress(update); } catch {}
+      }
+    };
+
+    await report({ progressPercent: 10, progressMessage: "Grouping files into chunks..." });
+
+    const flatFiles = repository.files || [];
+    const chunkSize = 100;
+    const chunks: Array<typeof flatFiles> = [];
+
+    for (let i = 0; i < flatFiles.length; i += chunkSize) {
+      chunks.push(flatFiles.slice(i, i + chunkSize));
+    }
+
+    if (chunks.length === 0) {
+      await report({ progressPercent: 100, progressMessage: "No files to analyze." });
+      return;
+    }
+
+    const geminiService = getGeminiService();
+    let completedChunks = 0;
+    const totalChunks = chunks.length;
+
+    // Clear previous chunks for this repo
+    await prisma.repositoryArchitectureChunk.deleteMany({
+      where: { repositoryId }
+    });
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      await report({ 
+        progressPercent: 10 + Math.floor((completedChunks / totalChunks) * 60), 
+        progressMessage: `Analyzing chunk ${i + 1} of ${totalChunks}...` 
+      });
+
+      let aiResponse = await geminiService.analyzeRepository({
+        repositoryId,
+        type: "architecture-chunk",
+        context: {
+          fileTree: chunk.map((f: any) => f.path).join("\n"),
+        }
+      });
+
+      aiResponse = aiResponse
+        .replace(/^[\s\n]*```(?:markdown|md)?[\s\n]*/i, "")
+        .replace(/[\s\n]*```[\s\n]*$/i, "")
+        .trim();
+
+      await prisma.repositoryArchitectureChunk.create({
+        data: {
+          repositoryId,
+          chunkPath: `chunk-${i}`,
+          summary: aiResponse
+        }
+      });
+
+      completedChunks++;
+    }
+
+    await report({ progressPercent: 70, progressMessage: "Synthesizing final architecture map..." });
+
+    const savedChunks = await prisma.repositoryArchitectureChunk.findMany({
+      where: { repositoryId },
+      orderBy: { id: "asc" }
+    });
+
+    const combinedSummaries = savedChunks.map(c => `Chunk ${c.chunkPath}:\n${c.summary}`).join("\n\n---\n\n");
+
+    let finalAiResponse = await geminiService.analyzeRepository({
+      repositoryId,
+      type: "architecture-document",
+      context: {
+        fileTree: `Combined Intermediate Summaries:\n\n${combinedSummaries}`,
+        commits: repository.commits,
+        languages: repository.languages,
+        contributors: repository.contributors
+      }
+    });
+
+    finalAiResponse = finalAiResponse
+      .replace(/^[\s\n]*```(?:markdown|md)?[\s\n]*/i, "")
+      .replace(/[\s\n]*```[\s\n]*$/i, "")
+      .trim();
+
+    await prisma.repositoryKnowledge.upsert({
+      where: { repositoryId },
+      create: {
+        repositoryId,
+        projectDescription: finalAiResponse
+      },
+      update: {
+        projectDescription: finalAiResponse
+      }
+    });
+
+    await report({ progressPercent: 100, progressMessage: "Completed architecture generation." });
   }
 
   /**
