@@ -2,6 +2,7 @@ import prisma from "../prisma";
 import type { AnalysisJob } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { isRetryableError, computeBackoffMs } from "../utils/retry";
+import { analysisQueue } from "../queue/analysisQueue";
 
 export type JobProgressUpdate = {
   progressPercent?: number;
@@ -12,32 +13,7 @@ export type JobProgressUpdate = {
 const DEFAULT_LOCK_MS = 5 * 60 * 1000;
 
 export class AnalysisJobService {
-  async reclaimOrphanedJobs(): Promise<number> {
-    const result = await prisma.analysisJob.updateMany({
-      where: {
-        status: "PROCESSING",
-        lockExpiresAt: { lt: new Date() },
-      },
-      data: {
-        status: "QUEUED",
-        lockedAt: null,
-        lockedBy: null,
-        lockExpiresAt: null,
-        nextRunAt: new Date(),
-        progressMessage: "Reclaimed after lock expiration",
-      },
-    });
-    return result.count;
-  }
 
-  async countOrphanedJobs(params?: { userId?: number }): Promise<number> {
-    const where: any = {
-      status: "PROCESSING",
-      lockExpiresAt: { lt: new Date() },
-    };
-    if (params?.userId) where.userId = params.userId;
-    return prisma.analysisJob.count({ where });
-  }
 
   async getAnalysisStats(params: { userId: number }): Promise<{
     total: number;
@@ -47,7 +23,7 @@ export class AnalysisJobService {
     failed: number;
     stuck: number;
   }> {
-    const [total, processing, queued, done, failed, stuck] =
+    const [total, processing, queued, done, failed] =
       await Promise.all([
         prisma.analysisJob.count({ where: { userId: params.userId } }),
         prisma.analysisJob.count({
@@ -62,15 +38,8 @@ export class AnalysisJobService {
         prisma.analysisJob.count({
           where: { userId: params.userId, status: "FAILED" },
         }),
-        prisma.analysisJob.count({
-          where: {
-            userId: params.userId,
-            status: "PROCESSING",
-            lockExpiresAt: { lt: new Date() },
-          },
-        }),
       ]);
-    return { total, processing, queued, done, failed, stuck };
+    return { total, processing, queued, done, failed, stuck: 0 };
   }
 
   async createRepositoryAnalysisJob(params: {
@@ -89,7 +58,7 @@ export class AnalysisJobService {
       if (existing) return existing;
 
       try {
-        return await tx.analysisJob.create({
+        const job = await tx.analysisJob.create({
           data: {
             repositoryId: params.repositoryId,
             userId: params.userId,
@@ -101,6 +70,8 @@ export class AnalysisJobService {
             maxAttempts: params.maxAttempts ?? 3,
           },
         });
+        await analysisQueue.add("repository_analysis", { jobId: job.id, userId: params.userId });
+        return job;
       } catch (error: any) {
         if (
           error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -137,7 +108,7 @@ export class AnalysisJobService {
       if (existing) return existing;
 
       try {
-        return await tx.analysisJob.create({
+        const job = await tx.analysisJob.create({
           data: {
             repositoryId: params.repositoryId,
             userId: params.userId,
@@ -148,6 +119,8 @@ export class AnalysisJobService {
             maxAttempts: params.maxAttempts ?? 3,
           },
         });
+        await analysisQueue.add("architecture_generation", { jobId: job.id, userId: params.userId });
+        return job;
       } catch (error: any) {
         if (
           error instanceof Prisma.PrismaClientKnownRequestError &&

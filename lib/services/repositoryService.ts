@@ -4,6 +4,22 @@ import * as path from "path";
 import * as os from "os";
 import * as crypto from "crypto";
 import * as fs from "fs/promises";
+import { ttlCache, TTL, repoStatsCacheKey } from "../utils/ttlCache";
+
+/** Shape returned by getRepositoryStats / _fetchRepositoryStats. */
+interface RepoStats {
+  totalCommits: number;
+  totalContributors: number;
+  totalFiles: number;
+  totalBranches: number;
+  recentActivity: {
+    shortHash: string;
+    message: string;
+    authorName: string;
+    committedAt: Date;
+  }[];
+  status: string;
+  lastAnalyzedAt: Date | null;
 import { invalidateGeminiAnalysisCacheForRepository } from "./geminiAnalysisCacheService";
 import { FileChangeType } from "@prisma/client";
 import { repoSyncLimiter } from "../utils/concurrencyLimiter";
@@ -299,7 +315,14 @@ export class RepositoryService {
 
       checkAborted();
 
-      await report({ progressPercent: 9, progressMessage: "Checking AI context configuration" });
+      // Check for monorepo workspaces if this is the root project
+      let subPackages: string[] = [];
+      if (!repository.targetDirectory) {
+        await report({ progressPercent: 9, progressMessage: "Detecting Monorepo sub-packages..." });
+        subPackages = await detectMonorepoPackages(tempDir);
+      }
+
+      await report({ progressPercent: 10, progressMessage: "Checking AI context configuration" });
 
       let knowledgeJson: ParsedRepositoryKnowledge | undefined = undefined;
       let knowledgeMd: ParsedRepositoryKnowledge | undefined = undefined;
@@ -600,6 +623,41 @@ export class RepositoryService {
         console.warn("Gemini cache invalidation failed:", error);
       }
 
+      // Automatically queue AnalysisJobs for any detected Monorepo sub-packages
+      if (subPackages.length > 0) {
+        await report({ progressPercent: 98, progressMessage: "Queueing sub-package analysis..." });
+        for (const pkgPath of subPackages) {
+          try {
+            const subRepo = await this.createRepository({
+              name: `${repository.name}/${pkgPath}`,
+              url: repository.url,
+              userId: repository.userId,
+              targetDirectory: pkgPath,
+              isPrivate: repository.isPrivate,
+            });
+
+            await prisma.repository.update({
+              where: { id: subRepo.id },
+              data: { parentId: repository.id }
+            });
+
+            await prisma.analysisJob.create({
+              data: {
+                repositoryId: subRepo.id,
+                userId: repository.userId,
+                status: "QUEUED",
+                type: "repository_analysis",
+              },
+            });
+          } catch (e) {
+            console.warn(`Failed to queue analysis for sub-package ${pkgPath}:`, e);
+          }
+        }
+      }
+
+      // Invalidate cached stats — analysis has changed commits, files, contributors, etc.
+      ttlCache.deleteByPrefix(`repo-stats:${repositoryId}:`);
+
       await report({ progressPercent: 100, progressMessage: "Completed" });
 
     } catch (error: any) {
@@ -608,6 +666,9 @@ export class RepositoryService {
         where: { id: repositoryId },
         data: { status: "failed" },
       });
+      // Invalidate cached stats — status has changed to "failed".
+      ttlCache.deleteByPrefix(`repo-stats:${repositoryId}:`);
+      await report({ progressMessage: "Failed" });
       await report({ progressMessage: "Analysis failed. Please try again." });
       throw error;
     } finally {
@@ -784,6 +845,8 @@ export class RepositoryService {
           take: 500,
         },
         knowledge: true,
+        subPackages: true,
+        parent: true,
       },
     });
 
@@ -802,17 +865,16 @@ export class RepositoryService {
             contributors: true,
             files: true,
             branches: true,
+            subPackages: true,
           },
         },
         languages: {
           orderBy: { percentage: "desc" },
           take: 3,
         },
+        parent: true,
       },
-      orderBy: [
-        { createdAt: "desc" },
-        { id: "desc" } // Deterministic tie-breaker
-      ],
+      orderBy: { id: "desc" },
     });
 
     let nextCursor: number | undefined = undefined;
@@ -840,6 +902,31 @@ export class RepositoryService {
       throw new Error("Repository not found");
     }
 
+    await prisma.$transaction([
+      // Explicitly delete file changes linked to commits of this repository
+      prisma.fileChange.deleteMany({
+        where: { commit: { repositoryId: id } },
+      }),
+      // Explicitly delete commits to prevent orphaned relational data
+      prisma.commit.deleteMany({
+        where: { repositoryId: id },
+      }),
+      // Explicitly delete analysis jobs
+      prisma.analysisJob.deleteMany({
+        where: { repositoryId: id },
+      }),
+      // Repository deletion handles the rest via Cascade
+      prisma.repository.delete({
+        where: { id },
+      }),
+    ]);
+    await prisma.repository.delete({
+      where: { id },
+    });
+
+    // Invalidate cached stats — repository no longer exists.
+    ttlCache.deleteByPrefix(`repo-stats:${id}:`);
+
     return { success: true };
   }
   //Explicitly set the status of a repository
@@ -855,8 +942,30 @@ export class RepositoryService {
 
   /**
    * Get repository statistics
+   *
+   * Results are cached in-process for TTL.REPO_STATS (5 minutes) to avoid
+   * repeated DB round-trips for the same repo. The cache is invalidated
+   * automatically when analysis completes, fails, or the repo is deleted.
    */
   async getRepositoryStats(id: number, userId: number) {
+    const cacheKey = repoStatsCacheKey(id, userId);
+
+    // Return cached result if still fresh.
+    const cached = ttlCache.get<RepoStats>(cacheKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const stats = await this._fetchRepositoryStats(id, userId);
+
+    // Populate cache.
+    ttlCache.set(cacheKey, stats, TTL.REPO_STATS);
+
+    return stats;
+  }
+
+  /** Raw DB fetch for repository stats — called by getRepositoryStats. */
+  private async _fetchRepositoryStats(id: number, userId: number): Promise<RepoStats> {
     const repository = await prisma.repository.findFirst({
       where: { id, userId },
     });
