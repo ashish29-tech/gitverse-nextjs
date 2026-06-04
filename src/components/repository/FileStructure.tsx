@@ -676,7 +676,7 @@ export const FileStructure = ({ repository }: FileStructureProps) => {
                             <Sparkles className="h-3 w-3" />
                             Highlight text to explain with AI
                           </span>
-                          <CopyToClipboard text={fileContent} className="h-7 w-7 text-xs bg-white/5 hover:bg-white/10" />
+                          <CopyToClipboard text={fileContent}className="text-xs bg-white/5 hover:bg-white/10"/>
                         </div>
                       </div>
                       <SyntaxHighlighter
