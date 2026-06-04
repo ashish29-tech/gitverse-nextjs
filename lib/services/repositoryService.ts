@@ -10,9 +10,6 @@ import { repoSyncLimiter } from "../utils/concurrencyLimiter";
 import { withDbRetry } from "../utils/dbRetry";
 import { gitverseConfigParser, ParsedRepositoryKnowledge } from "../parsers/gitverseConfigParser";
 import { repositoryKnowledgeService } from "./repositoryKnowledgeService";
-import { getGeminiService } from "./geminiService";
-import { getGithubAccessToken } from "./githubAuthService";
-import { detectMonorepoPackages } from "../utils/monorepoUtils";
 
 function yieldIfHighMemory(threshold?: number): Promise<void> {
   if (threshold === undefined) {
