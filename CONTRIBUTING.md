@@ -503,7 +503,134 @@ Issue comment ──► Auto Assign ──► Self-assign or
 - **Rate limiting**: Sensitive endpoints (auth, API keys) use rate limiting to prevent abuse. Rate limits are enforced per user session or IP address. The rate limit configuration is in `lib/middleware/rateLimit.ts`
 - **Secrets management**: Never hardcode secrets. Use environment variables for all credentials. Mark secrets as Sensitive in Vercel. Rotate secrets regularly. Check for leaked secrets with `git secrets` or similar tools before committing
 - **CSRF protection**: NextAuth includes CSRF protection for authentication routes. For custom API routes, validate the request origin header
-- **File uploads**: Avatar uploads validate file type and size server-side. URLs for external avatars are checked for format but should be validated against SSRF vectors before fetching
+- **File uploads**: Avatar uploads validate file type and size server-side. URLs for external avatars must pass SSRF validation (DNS resolution and private IP range checks) before being stored. The `validateSafeUrl` function in `lib/utils/ssrfValidator.ts` performs this check
+- **URL validation**: Any feature that accepts user-supplied HTTP URLs (avatars, repository URLs, webhook URLs) must validate them against SSRF vectors. Use `validateSafeUrl` from `lib/utils/ssrfValidator.ts` which resolves DNS and checks all resolved IPs against private, loopback, and link-local ranges. Do not write ad-hoc URL format checks that only verify protocol and hostname structure
+
+##### Server-Side Request Forgery (SSRF) Prevention
+
+SSRF attacks occur when an attacker provides a URL that the server fetches or stores, pointing to internal services, cloud metadata endpoints, or other restricted resources. GitVerse uses a layered defense:
+
+**1. DNS Resolution and IP Range Validation**
+
+The `validateSafeUrl` function in `lib/utils/ssrfValidator.ts` validates URLs at the network level:
+- Resolves the hostname via `dns.lookup` to get all resolved IP addresses (both IPv4 and IPv6)
+- Checks every resolved address against private IP ranges:
+  - `10.0.0.0/8` — RFC 1918 private space
+  - `172.16.0.0/12` — RFC 1918 private space
+  - `192.168.0.0/16` — RFC 1918 private space
+  - `127.0.0.0/8` — IPv4 loopback
+  - `169.254.0.0/16` — Link-local and cloud metadata (including AWS 169.254.169.254)
+  - `0.0.0.0/8` — Current network
+  - `::1/128` — IPv6 loopback
+  - `fc00::/7` — IPv6 unique local addresses
+  - `fe80::/10` — IPv6 link-local addresses
+- If any resolved IP falls into a restricted range, the URL is rejected
+- If DNS resolution fails (NXDOMAIN, timeout), the URL is considered unsafe and rejected
+
+**2. Avatar URL Validation**
+
+The avatar upload endpoint (`/api/upload/avatar`) handles three input types:
+- **File uploads**: Validated for MIME type and file size, stored server-side. No SSRF vector
+- **Data URLs**: Parsed server-side, decoded, and stored. No external fetch required
+- **HTTP/HTTPS URLs**: Must pass `validateSafeUrl` validation before storage. The `validateHttpAvatarUrl` function first checks format (protocol, hostname structure) then delegates to `validateSafeUrl` for DNS resolution and IP range checking
+
+**3. When to Apply SSRF Validation**
+
+Use `validateSafeUrl` for any user-supplied URL that the server will:
+- Fetch or download (webhook payloads, repository cloning, avatar fetching)
+- Store and render server-side (avatar URLs, profile links)
+- Forward to internal services (webhook forwarding, proxy endpoints)
+
+Do not use `validateSafeUrl` for:
+- URLs that are only displayed as text (user profile links in markdown)
+- URLs that are handled entirely client-side (external image embeds in rich text)
+- URLs that the server never touches (external link fields stored for reference only)
+
+**4. Defense in Depth**
+
+Beyond SSRF validation, follow these practices:
+- Run background workers in isolated environments with minimal network access (no metadata endpoint access, no internal service discovery)
+- Use network policies and firewalls to restrict outbound traffic from worker processes to only required external services (GitHub API, Google Gemini API)
+- Log all rejected URL validation attempts with the hostname and reason for auditing
+- Regularly audit new features that accept URLs to ensure SSRF validation is applied
+
+### Testing Patterns
+
+This project uses specific testing patterns that all contributors should follow:
+
+#### Unit Test Structure
+
+Place test files in `__tests__/` directories adjacent to the module they test:
+
+```
+lib/services/imageService.ts
+lib/services/__tests__/imageService.test.ts
+
+lib/utils/ssrfValidator.ts
+lib/utils/__tests__/ssrfValidator.test.ts
+
+app/api/upload/avatar/route.ts
+app/api/upload/avatar/__tests__/route.test.ts
+```
+
+Each test file follows this structure:
+- Top-level `describe("moduleName")` block
+- Nested `describe("functionName")` blocks for each exported function
+- Individual `it("describes the specific behavior")` test cases
+- `beforeEach` for common mock setup and state reset
+
+#### Mocking External Dependencies
+
+**Database (Prisma):** Never connect to a real database. Use `mockDeep` from `vitest-mock-extended` or jest.fn() to mock Prisma client methods. Mock at the module boundary using `jest.mock("@/lib/prisma", ...)`.
+
+**Network calls (DNS, HTTP):** For functions that call `dns.lookup` or make HTTP requests, use one of two approaches:
+- **Integration tests**: Use real DNS resolution with IP literal URLs (e.g., `http://10.0.0.1/test`). The `dns.lookup` function returns the IP address directly for literal IPs without performing a DNS query, making these tests fast and deterministic
+- **Mocked tests**: Use `jest.mock` for the network module. Note that Node.js built-in modules like `dns/promises` require the mock factory to reference a variable accessible at module load time
+
+Example of network-independent testing:
+```typescript
+// Tests private IP blocking without mocking DNS
+it("rejects URLs with private IPs", async () => {
+  const result = await validateSafeUrl("http://10.0.0.1/config");
+  expect(result).toBe(false);
+});
+```
+
+**File system:** Use mock files and FormData objects in tests. The `File` constructor works in Jest with the `undici` polyfill:
+
+```typescript
+const file = new File(["content"], "avatar.jpg", { type: "image/jpeg" });
+const formData = new FormData();
+formData.append("file", file);
+```
+
+#### Testing Async Functions
+
+When a synchronous function is changed to async:
+1. Update the function signature (add `async` and `Promise<>` return type)
+2. Update all callers to `await` the function
+3. Update the mock in test files — `mockReturnValue` works with `await` but `mockResolvedValue` is clearer
+4. Update direct test calls to use `await`
+5. Add test cases for the async behavior (e.g., "does not call network function when format check fails")
+
+Example async migration:
+```typescript
+// Before
+export function validateHttpAvatarUrl(url: string): ImageValidationResult { ... }
+
+// After
+export async function validateHttpAvatarUrl(url: string): Promise<ImageValidationResult> { ... }
+```
+
+#### Edge Case Testing
+
+For each function, test these categories:
+- **Happy path**: Valid inputs produce expected success
+- **Format validation**: Invalid formats are rejected before processing
+- **Security validation**: Restricted inputs are blocked (private IPs, malicious protocols)
+- **Boundary conditions**: Values at or near thresholds (IP range boundaries, file size limits)
+- **Error handling**: Function behaves correctly when dependencies throw
+- **Side effects**: Mocked functions are called with expected arguments and not called when validation fails early
 
 ### Running Tests Locally
 
@@ -543,13 +670,42 @@ npm test -- --testPathPattern="rateLimit"
 
 The CI workflows use mock environment variables for unit tests. These are defined inline in the workflow files and do not need to be set in your local environment. However, for full E2E tests, the following must be configured:
 
-- `DATABASE_URL` — PostgreSQL connection string
-- `JWT_SECRET` — JWT signing secret
+- `DATABASE_URL` — PostgreSQL connection string (Neon pooler URL for serverless)
+- `JWT_SECRET` — JWT signing secret for local sessions
 - `NEXTAUTH_SECRET` — NextAuth session encryption key
-- `NEXTAUTH_URL` — Application URL
-- `GEMINI_API_KEY` — Google Gemini API key
+- `NEXTAUTH_URL` — Application URL (http://localhost:3000 for development)
+- `GEMINI_API_KEY` — Google Gemini API key for AI analysis
 - `INTERNAL_WORKER_SECRET` — Internal API authentication secret
-- `TOKEN_ENCRYPTION_KEY` — 32-byte hex key for token encryption
+- `TOKEN_ENCRYPTION_KEY` — 32-byte hex key for OAuth token encryption
+- `ANALYSIS_RUNNER_SECRET` — Secret for authenticating analysis runner API calls
+- `CRON_SECRET` — Bearer token for cron job endpoint authentication
+- `GOOGLE_CLIENT_ID` — Google OAuth client ID (Google sign-in)
+- `GOOGLE_CLIENT_SECRET` — Google OAuth client secret (Google sign-in)
+- `GITHUB_APP_ID` — GitHub App ID (PR review integration)
+- `GITHUB_APP_PRIVATE_KEY` — GitHub App private key in PEM format
+- `GITHUB_WEBHOOK_SECRET` — Secret for verifying GitHub webhook payloads
+
+### TypeScript Configuration
+
+The project uses multiple TypeScript configuration files for different compilation targets:
+
+| File | Target | Purpose |
+| :--- | :----- | :------ |
+| `tsconfig.json` | Next.js app | Main configuration for the Next.js application code in `src/`, `app/`, `lib/` |
+| `tsconfig.worker.json` | Node.js worker | Configuration for the background analysis worker in `scripts/` and `lib/` (compiled to `dist-worker/`) |
+
+Key `tsconfig.json` settings:
+- **`paths`** — Path aliases (`@/lib/*`, `@/app/*`, `@/types/*`) must be kept in sync with Jest module name mapping in `jest.config.js`
+- **`strict: true`** — All strict type-checking options are enabled
+- **`moduleResolution: bundler`** — Next.js uses the bundler module resolution strategy
+- **`jsx: preserve`** — JSX is preserved for Next.js SWC compilation
+
+The worker tsconfig differs from the main config:
+- **`module: commonjs`** — Worker runs in Node.js, not the browser
+- **`outDir: dist-worker`** — Compiled output goes to a separate directory
+- **`include`** — Only `scripts/` and `lib/` paths, excluding `src/` and `app/`
+
+When adding new imports from `lib/` to worker scripts, ensure the imported module does not use browser APIs, Next.js server-only features, or React. The worker runs in a plain Node.js context.
 
 ### Common CI Failures and Fixes
 
@@ -563,6 +719,20 @@ The CI workflows use mock environment variables for unit tests. These are define
 | Prisma format fails | Schema not formatted | Run `npx prisma format` on the schema file |
 | Playwright fails | Browser test regression | Run `npm run test:e2e` locally; check `playwright-report/` for traces |
 | Spam detection flags your PR | PR description too short or generic | Write a detailed description with at least 30 characters explaining what and why |
+
+### Code Review Guidelines
+
+When reviewing a PR, maintainers check for:
+- Does the change match the issue description and acceptance criteria?
+- Are there sufficient tests covering the new code paths?
+- Do the tests use the project's established mocking patterns?
+- Are edge cases handled (empty states, error states, boundary conditions)?
+- Does the change introduce any new dependencies?
+- Does the change follow the project's coding style and conventions?
+- Are security considerations addressed (input validation, SSRF prevention, auth checks)?
+- Is the diff minimal — does it only change what's needed?
+
+Contributors should self-review their code against these same criteria before requesting review.
 
 ### PR Quality Gates
 

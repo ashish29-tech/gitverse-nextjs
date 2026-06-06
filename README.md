@@ -508,6 +508,77 @@ firebase deploy
 
 - `https://<your-domain>/api/auth/callback/google`
 
+## 🔒 Security
+
+GitVerse implements several security layers to protect users and infrastructure. The security architecture follows the principle of defense in depth — multiple independent checks at different layers prevent a single vulnerability from compromising the system.
+
+### Threat Model
+
+The main security threats GitVerse defends against are:
+- **SSRF (Server-Side Request Forgery)**: Attackers supplying URLs that point to internal services, cloud metadata endpoints, or restricted network ranges
+- **Unauthorized access**: Unauthenticated users accessing protected endpoints or another user's data
+- **Malicious file uploads**: Attackers uploading non-image files or oversized payloads through avatar upload
+- **Rate limit bypass**: Attackers flooding endpoints to exhaust server resources
+- **Credential leakage**: Secrets exposed through error messages, logs, or client-side code
+
+### Server-Side Request Forgery (SSRF) Protection
+
+SSRF attacks let attackers trick a server into making requests to internal services, cloud metadata endpoints, or other restricted resources. GitVerse uses DNS-level validation to block these attacks.
+
+**Where SSRF validation is applied:**
+- Avatar HTTP URL uploads (`/api/upload/avatar`) — validated via `validateHttpAvatarUrl` which calls `validateSafeUrl` from `lib/utils/ssrfValidator.ts`
+- Repository URL validation — the same `validateSafeUrl` utility is used to check repository URLs before cloning
+
+**How it works:**
+
+The `validateSafeUrl` function performs these steps:
+1. Parses the URL to extract the hostname
+2. Rejects non-HTTP/HTTPS protocols immediately
+3. Resolves the hostname via `dns.lookup` to get all IP addresses (both IPv4 and IPv6)
+4. Checks every resolved address against private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16, 0.0.0.0/8)
+5. Checks against IPv6 private ranges (::1, fc00::/7, fe80::/10)
+6. If any resolved IP falls into a restricted range, the URL is rejected
+7. If DNS resolution fails (NXDOMAIN, timeout, network error), the URL is considered unsafe and rejected
+
+**Why format-only checks are insufficient:**
+
+A naive URL validator that only checks `protocol + hostname.includes(".")` can be bypassed trivially:
+- `http://169.254.169.254/latest/meta-data/` has a valid protocol, hostname with dots, but points to the AWS metadata service
+- `http://10.0.0.1/admin` passes format checks but targets an internal RFC 1918 address
+- `http://127.0.0.1:3000/api/admin/dlq` passes format checks but targets a local web server
+- An attacker-controlled domain like `internal-proxy.evil.com` could resolve to an internal IP via DNS rebinding
+
+**Avatar upload validation flow:**
+
+```
+User submits HTTP URL → validateHttpAvatarUrl()
+  → Check protocol is http: or https:
+  → Check hostname exists and contains a dot
+  → validateSafeUrl() → dns.lookup(hostname)
+    → All IPs public? → Accept URL
+    → Any IP private? → Reject with "restricted address"
+```
+
+### Authentication and Authorization
+
+- **Session validation**: All API routes that handle user data use `requireAuth` middleware to validate sessions
+- **Resource ownership**: Users can only access their own data (repositories, profiles, sessions)
+- **Rate limiting**: Sensitive endpoints enforce per-user rate limits to prevent abuse
+
+### Input Validation
+
+- **File uploads**: Avatar files are validated for MIME type (JPEG, PNG, WebP, GIF only) and size (max 500KB)
+- **Data URLs**: Base64 image data is validated for content type, decoded server-side, and stored on disk
+- **JSON bodies**: All API routes that accept JSON validate fields before processing
+- **URLs**: HTTP/HTTPS URLs are validated against SSRF vectors before storage
+
+### Secrets Management
+
+- All credentials use environment variables, never hardcoded values
+- Secrets are marked as sensitive in deployment environments
+- Environment variable validation runs during CI to catch missing values
+- Token encryption keys are stored as hex-encoded strings and used for encrypting OAuth tokens at rest
+
 ## 📝 Environment Variables
 
 Required:
@@ -734,7 +805,229 @@ GitVerse shows understanding:
 
 It turns a repo into a **learning system, not just a file browser**.
 
+### 11. How does GitVerse prevent SSRF attacks against avatar URLs?
 
+The avatar upload endpoint previously accepted any HTTP/HTTPS URL that passed a format check (protocol + hostname with a dot). An attacker could set their avatar to `http://169.254.169.254/latest/meta-data/` (AWS metadata) or `http://localhost:3000/api/admin/dlq` because no DNS resolution or IP validation was performed.
+
+The fix reuses `validateSafeUrl` from `lib/utils/ssrfValidator.ts`, which resolves the hostname via `dns.lookup` and checks every resolved IP address against private, loopback, and link-local ranges. Only URLs that resolve entirely to public IP addresses are accepted. The validation also handles IPv6 addresses (::1, fc00::/7, fe80::/10).
+
+### 12. What private IP ranges are blocked by the SSRF validator?
+
+The validator blocks all RFC 1918 private addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), loopback (127.0.0.0/8, ::1), link-local and cloud metadata (169.254.0.0/16), current network (0.0.0.0/8), IPv6 unique local addresses (fc00::/7), and IPv6 link-local addresses (fe80::/10). DNS resolution failures also result in rejection.
+
+### 13. Does GitVerse support IPv6 for SSRF validation?
+
+Yes. The `isPrivateIP` function in `lib/utils/ssrfValidator.ts` checks both IPv4 and IPv6 address ranges. IPv6 loopback (::1), unique local addresses (fc00::/7), and link-local addresses (fe80::/10) are all detected and blocked. The `dns.lookup` call with `{ all: true }` resolves both IPv4 and IPv6 records.
+
+### 14. Why not just block hostnames like "localhost" or "169.254.169.254"?
+
+Blocking hostnames by string matching is fragile. An attacker can use:
+- Alternative representations (e.g., `2130706433` for `127.0.0.1` in decimal)
+- DNS records that point to internal IPs (e.g., a domain that resolves to 10.0.0.1)
+- IPv6 literal forms (e.g., `http://[::1]:3000/`)
+- URL-encoded hostnames
+
+The only reliable defense is to resolve the hostname to IP addresses and check those against restricted ranges. This is what `validateSafeUrl` does.
+
+### 15. Can I skip SSRF validation for development?
+
+No. SSRF validation should never be bypassed, even in development. The validation uses DNS resolution which works correctly in all environments. If you need to use an avatar URL from a local server during development, upload the image directly (multipart or data URL) instead of providing an HTTP URL.
+
+### 16. How are HTTP URL avatars different from file uploads?
+
+File uploads and data URLs are processed server-side — the image data is decoded, validated for MIME type and size, and stored on disk. The database stores a URL pointing to the local file. HTTP URL avatars are stored as-is and referenced directly from the user's browser, so the browser (not the server) fetches the image. This means:
+- The server never fetches HTTP URL avatars (no server-side download)
+- SSRF validation happens at the time the URL is submitted, not at render time
+- If the URL points to a malicious site, the user's browser accesses it, not the server
+- The validation prevents attackers from submitting URLs to internal services in the first place
+
+
+
+---
+
+## 🛡️ API Security Reference
+
+This section documents the security measures applied to each API module. Use it as a quick reference when adding new endpoints.
+
+| Endpoint | Auth | Rate Limit | Input Validation | SSRF Check |
+| :------- | :--- | :--------- | :--------------- | :--------- |
+| `POST /api/upload/avatar` | `requireAuth` | `AVATAR_UPLOAD` (5/hr) | File MIME + size, data URL, HTTP URL via `validateSafeUrl` | Yes (HTTP URLs) |
+| `POST /api/auth/login` | Public | `AUTH` (10/min) | Email format, password length | N/A |
+| `POST /api/auth/signup` | Public | `AUTH` (5/min) | Email, password, username validation | N/A |
+| `POST /api/repositories/analyze` | `requireAuth` | `ANALYSIS` (20/hr) | URL validation via `validateSafeUrl` | Yes (repo URLs) |
+| `POST /api/integrations/github/webhook` | Signature verification | None | Payload schema validation | N/A |
+| `POST /api/cron/run-analysis` | `CRON_SECRET` | None | Job ID validation | N/A |
+
+### Security Headers
+
+The application sets the following security headers on all responses through Next.js middleware or server configuration:
+
+| Header | Value | Purpose |
+| :----- | :---- | :------ |
+| `X-Content-Type-Options` | `nosniff` | Prevents MIME type sniffing |
+| `X-Frame-Options` | `DENY` | Prevents clickjacking |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Controls referrer header |
+| `X-XSS-Protection` | `1; mode=block` | Enables XSS filter in older browsers |
+
+### Rate Limiting Configuration
+
+Rate limits are enforced per user session (authenticated requests) or per IP (unauthenticated requests). The rate limit configuration lives in `lib/middleware/rateLimit.ts`:
+
+| Rate Limit Key | Namespace | Max Requests | Window | Applied To |
+| :------------- | :-------- | :----------- | :----- | :--------- |
+| `AVATAR_UPLOAD` | `upload:avatar` | 5 | 1 hour | Avatar upload endpoint |
+| `AUTH_LOGIN` | `auth:login` | 10 | 1 minute | Login endpoint |
+| `AUTH_SIGNUP` | `auth:signup` | 5 | 1 minute | Signup endpoint |
+| `ANALYSIS` | `repo:analysis` | 20 | 1 hour | Repository analysis |
+
+When a rate limit is exceeded, the server returns a `429 Too Many Requests` response with a JSON body containing the error code, message, and reset timestamp.
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+## 🙏 Acknowledgments
+
+- Next.js team for the amazing framework
+- Vercel for hosting solutions
+- Google for Gemini AI
+- NeonDB for serverless PostgreSQL
+- All contributors and users of GitVerse
+
+## ❓ FAQ – Common Questions & Edge Cases
+> This section covers product behavior, limitations, and design decisions not included in troubleshooting.
+### 1. Can GitVerse analyze very large repositories?
+Yes, but performance depends on repo size.
+
+- Small repos → fast (seconds)
+- Medium repos → moderate (few seconds to a minute)
+- Large monorepos → slower due to:
+  - dependency graph building
+  - AI summarization
+  - full file traversal
+
+### 2. Does GitVerse store repository data?
+GitVerse may temporarily store:
+- repository structure
+- analysis results
+- AI-generated summaries
+
+This helps improve performance and reduce repeated computation. You can extend it to add long-term caching if needed.
+
+### 3. What happens if GitHub API rate limits are hit?
+If GitHub rate limits are reached:
+- repository fetch may fail
+- partial analysis may be returned
+
+Recommended improvements:
+- use GitHub App authentication for higher limits
+- add retry with exponential backoff
+- cache repository metadata
+
+### 4. Does GitVerse support GitLab or Bitbucket?
+Not currently.
+
+GitVerse is built for GitHub only, but it can be extended by abstracting `gitService.ts` into provider-based adapters.
+
+### 5. Is GitVerse real-time collaborative?
+No.
+
+Currently:
+- single-user analysis only
+- no shared sessions or live collaboration
+
+Future idea:
+- shared repo exploration rooms
+- collaborative AI chat per repository
+
+### 6. How accurate is AI-based architecture mapping?
+AI results are:
+- helpful for understanding structure
+- not guaranteed to reflect runtime behavior perfectly
+
+Accuracy depends on:
+- code quality
+- naming conventions
+- project structure clarity
+
+### 7. Can I customize graphs and visualizations?
+Yes.
+
+Modify:
+src/components/visualizations/
+
+You can customize:
+- dependency graphs
+- module maps
+- risk heatmaps
+- node layouts
+
+### 8. Is GitVerse suitable for production-level analysis?
+Yes, but mainly for:
+- onboarding developers
+- exploring unfamiliar codebases
+- hackathon or OSS contribution workflows
+
+It is not a replacement for full static analysis tools.
+
+### 9. Can I customize AI prompts?
+Yes.
+
+Edit:
+lib/services/geminiService.ts
+
+You can change:
+- architecture explanation style
+- onboarding prompts
+- risk detection logic
+- suggestion formats
+
+### 10. What makes GitVerse different from GitHub UI?
+GitHub shows files.
+
+GitVerse shows understanding:
+- architecture map
+- dependency flow
+- hotspots & risks
+- AI onboarding assistant
+
+It turns a repo into a **learning system, not just a file browser**.
+
+### 11. How does GitVerse prevent SSRF attacks against avatar URLs?
+
+The avatar upload endpoint previously accepted any HTTP/HTTPS URL that passed a format check (protocol + hostname with a dot). An attacker could set their avatar to `http://169.254.169.254/latest/meta-data/` (AWS metadata) or `http://localhost:3000/api/admin/dlq` because no DNS resolution or IP validation was performed.
+
+The fix reuses `validateSafeUrl` from `lib/utils/ssrfValidator.ts`, which resolves the hostname via `dns.lookup` and checks every resolved IP address against private, loopback, and link-local ranges. Only URLs that resolve entirely to public IP addresses are accepted. The validation also handles IPv6 addresses (::1, fc00::/7, fe80::/10).
+
+### 12. What private IP ranges are blocked by the SSRF validator?
+
+The validator blocks all RFC 1918 private addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), loopback (127.0.0.0/8, ::1), link-local and cloud metadata (169.254.0.0/16), current network (0.0.0.0/8), IPv6 unique local addresses (fc00::/7), and IPv6 link-local addresses (fe80::/10). DNS resolution failures also result in rejection.
+
+### 13. Does GitVerse support IPv6 for SSRF validation?
+
+Yes. The `isPrivateIP` function in `lib/utils/ssrfValidator.ts` checks both IPv4 and IPv6 address ranges. IPv6 loopback (::1), unique local addresses (fc00::/7), and link-local addresses (fe80::/10) are all detected and blocked. The `dns.lookup` call with `{ all: true }` resolves both IPv4 and IPv6 records.
+
+### 14. Why not just block hostnames like "localhost" or "169.254.169.254"?
+
+Blocking hostnames by string matching is fragile. An attacker can use:
+- Alternative representations (e.g., `2130706433` for `127.0.0.1` in decimal)
+- DNS records that point to internal IPs (e.g., a domain that resolves to 10.0.0.1)
+- IPv6 literal forms (e.g., `http://[::1]:3000/`)
+- URL-encoded hostnames
+
+The only reliable defense is to resolve the hostname to IP addresses and check those against restricted ranges. This is what `validateSafeUrl` does.
+
+### 15. Can I skip SSRF validation for development?
+
+No. SSRF validation should never be bypassed, even in development. The validation uses DNS resolution which works correctly in all environments. If you need to use an avatar URL from a local server during development, upload the image directly (multipart or data URL) instead of providing an HTTP URL.
+
+### 16. How are HTTP URL avatars different from file uploads?
+
+File uploads and data URLs are processed server-side — the image data is decoded, validated for MIME type and size, and stored on disk. The database stores a URL pointing to the local file. HTTP URL avatars are stored as-is and referenced directly from the user's browser, so the browser (not the server) fetches the image. This means:
+- The server never fetches HTTP URL avatars (no server-side download)
+- SSRF validation happens at the time the URL is submitted, not at render time
+- If the URL points to a malicious site, the user's browser accesses it, not the server
+- The validation prevents attackers from submitting URLs to internal services in the first place
 
 ---
 
