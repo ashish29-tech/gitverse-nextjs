@@ -6,6 +6,11 @@ All notable changes to this project will be documented here.
 
 ### Added
 - Initial changelog created
+- Real `pg_dump`-based database backup endpoint at `GET /api/cron/db-backup`
+- `lib/services/backupService.ts` — pg_dump execution, gzip compression, optional S3 upload, retention cleanup
+- `docs/infrastructure/database-backup.md` — backup architecture documentation with env var reference, restore procedure, and production considerations
+- Cron schedule for db-backup in `vercel.json` (daily at 06:00 UTC)
+- Environment variable documentation for backup in `.env.example`
 - Migration script `scripts/encrypt-mfa-secrets.ts` to encrypt existing plaintext TOTP secrets at rest
 - Migration script `scripts/re-encrypt-all.ts` to rotate encryption for all MFA secrets after DEK rotation
 - Migration `20260606000001_encrypt_mfa_secrets` to add `token_encrypted` column to `mfa_configs` (handles existing schema drift)
