@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useSessionExpiry } from "@/hooks/useSessionExpiry";
 import { useToast } from "@/hooks/use-toast";
+import { SESSION_EXPIRED_MESSAGE } from "@/lib/sessionConstants";
 
 export function SessionExpiryHandler() {
   useSessionExpiry();
@@ -10,10 +11,11 @@ export function SessionExpiryHandler() {
 
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
+      if (!(e instanceof CustomEvent)) return;
+      const detail = e.detail;
       toast({
         title: "Session Expired",
-        description: detail?.message ?? "Your session has expired. Please log in again.",
+        description: detail?.message ?? SESSION_EXPIRED_MESSAGE,
         variant: "destructive",
       });
     };

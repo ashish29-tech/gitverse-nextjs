@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { SESSION_EXPIRED_MESSAGE } from "@/lib/sessionConstants";
 
 export function useSessionExpiry() {
   const { status } = useSession();
@@ -19,7 +20,7 @@ export function useSessionExpiry() {
       if (typeof window !== "undefined") {
         localStorage.removeItem("gitverse_token");
         window.dispatchEvent(new CustomEvent("session-expired", {
-          detail: { message: "Your session has expired. Please log in again." },
+          detail: { message: SESSION_EXPIRED_MESSAGE },
         }));
       }
       router.push("/login");

@@ -9,6 +9,7 @@ import React, {
 } from "react";
 import { useSession } from "next-auth/react";
 import { buildApiUrl } from "../services/apiConfig";
+import { SESSION_EXPIRED_MESSAGE } from "@/lib/sessionConstants";
 
 interface User {
   id: string;
@@ -92,8 +93,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             localStorage.removeItem("gitverse_token");
             if (typeof window !== "undefined") {
               window.dispatchEvent(new CustomEvent("session-expired", {
-                detail: { message: "Your session has expired. Please log in again." },
+                detail: { message: SESSION_EXPIRED_MESSAGE },
               }));
+              window.location.href = "/login";
             }
           } else {
             localStorage.removeItem("gitverse_token");
