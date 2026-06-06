@@ -1,6 +1,7 @@
 import { GitHubService } from "@/lib/services/githubService";
 import { GeminiService } from "@/lib/services/geminiService";
 import { getActivePoliciesForRepository, buildPolicyPromptSection } from "@/lib/services/reviewPolicyService";
+import yaml from "yaml";
 import { sanitizeTextContent } from "@/lib/utils/promptSanitization";
 
 export type ReviewSeverity = "critical" | "high" | "medium" | "low";
@@ -245,11 +246,25 @@ export async function reviewPullRequest(params: {
     ? `\nCross-Repository Impact Risk: ${impactReport.risk}\nReason: ${impactReport.reason}\nPotentially Affected Downstream Repositories: ${impactReport.potentiallyAffectedRepositories.join(", ")}\n` 
     : "";
 
-  const processChunk = async (chunkFiles: typeof prFiles, chunkIndex: number, totalChunks: number): Promise<PRReviewResponse | null> => {
-    const { diff, stats } = buildDiffForPrompt(chunkFiles);
-
   // Fetch active organizational policies for this repository
   let policySection = "";
+  let yamlPolicies: string[] = [];
+
+  // Attempt to fetch from gitverse.yml in the repository
+  try {
+    const yamlContent = await github.getFileContent(params.owner, params.repo, "gitverse.yml", pr.head?.sha || pr.base?.sha);
+    if (yamlContent) {
+      const parsedYaml = yaml.parse(yamlContent);
+      if (parsedYaml?.reviewGuidelines && Array.isArray(parsedYaml.reviewGuidelines)) {
+        yamlPolicies = parsedYaml.reviewGuidelines;
+      } else if (parsedYaml?.rules && Array.isArray(parsedYaml.rules)) {
+        yamlPolicies = parsedYaml.rules.map((r: any) => typeof r === 'string' ? r : r.rule).filter(Boolean);
+      }
+    }
+  } catch (e) {
+    // ignore if file doesn't exist
+  }
+
   if (params.repositoryId) {
     try {
       const policies = await getActivePoliciesForRepository(params.repositoryId);
@@ -259,6 +274,20 @@ export async function reviewPullRequest(params: {
     }
   }
 
+  if (yamlPolicies.length > 0) {
+    if (!policySection) {
+      policySection = "\nORGANIZATIONAL POLICIES (MUST ENFORCE):\nThe following custom rules are defined by the repository administrators. You MUST check for compliance with each rule. If a PR violates any rule, create an issue with severity matching the rule's severity level and category set to \"policy-violation\".\n\n";
+    }
+    for (const rule of yamlPolicies) {
+      policySection += `- [HIGH] ${rule}\n`;
+    }
+    if (!policySection.includes("IMPORTANT: Policy violations should be flagged")) {
+      policySection += "\nIMPORTANT: Policy violations should be flagged with the exact severity specified. Use the \"suggestion\" field to explain how to fix the violation according to the organizational standard.\n";
+    }
+  }
+
+  const processChunk = async (chunkFiles: typeof prFiles, chunkIndex: number, totalChunks: number): Promise<PRReviewResponse | null> => {
+    const { diff, stats } = buildDiffForPrompt(chunkFiles);
 
     if (!diff) {
       if (totalChunks === 1) {
@@ -339,12 +368,31 @@ ${safeDiff}
 </DIFF_DATA>`;
 
     const gemini = new GeminiService();
-    const result = await gemini.chatRaw(prompt);
-    const parsed = safeParseReviewJson(result.text);
-    if (!parsed) {
-      throw new Error("AI response was not valid JSON");
+    try {
+      const result = await gemini.chatRaw(prompt);
+      const parsed = safeParseReviewJson(result.text);
+      if (!parsed) {
+        throw new Error("AI response was not valid JSON");
+      }
+      return parsed;
+    } catch (error: any) {
+      if (error.message && error.message.includes("High-confidence secret detected")) {
+        const { orgAuditLogService } = await import("./org-audit-log");
+        await orgAuditLogService.logEvent({
+          repositoryId: params.repositoryId,
+          action: "SECRET_LEAK_PREVENTED",
+          resource: "pull_request",
+          details: {
+            prNumber: params.number,
+            repoName: params.repo,
+            ownerName: params.owner,
+            message: "PR review halted due to high-confidence secret detected in diff.",
+            errorDetails: error.message
+          }
+        });
+      }
+      throw error;
     }
-    return parsed;
   };
 
   // Determine chunkSize based on mode
@@ -367,6 +415,27 @@ ${safeDiff}
   });
 
   if (!review) {
+    if (chunkResult.errorReason && chunkResult.errorReason.includes("High-confidence secret detected")) {
+      return {
+        review: {
+          summary: `**[CRITICAL SECURITY ALERT]**\nThe PR review was halted because a high-confidence secret was detected in the diff. The organization administrator has been alerted. Please remove the secret and rotate it immediately.`,
+          overallScore: 0,
+          issues: [{
+            title: "High-Confidence Secret Detected",
+            severity: "critical",
+            category: "security",
+            file: null,
+            line: null,
+            explanation: chunkResult.errorReason,
+            suggestion: "Remove the hardcoded secret from your code, remove it from git history if necessary, and rotate the exposed credential immediately."
+          }],
+          praise: []
+        },
+        prTitle: pr.title,
+        prUrl: pr.html_url
+      };
+    }
+
     // Fallback if completely failed
     return {
       review: {

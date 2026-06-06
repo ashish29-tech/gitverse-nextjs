@@ -28,7 +28,19 @@ export class PRImpactAnalysisService {
       try {
         const knowledge = await repositoryKnowledgeService.getKnowledge(repoId);
         if (knowledge && knowledge.architecturePrinciples) {
-          architecturePrinciples = JSON.parse(knowledge.architecturePrinciples as string) || [];
+          const ap = knowledge.architecturePrinciples;
+          if (Array.isArray(ap)) {
+            architecturePrinciples = ap.filter((x): x is string => typeof x === "string");
+          } else if (typeof ap === "string") {
+            try {
+              const parsed = JSON.parse(ap);
+              if (Array.isArray(parsed)) {
+                architecturePrinciples = parsed.filter((x): x is string => typeof x === "string");
+              }
+            } catch {
+              // ignore
+            }
+          }
         }
       } catch (e) {
         console.warn("Failed to fetch repository knowledge for impact analysis:", e);
@@ -42,6 +54,7 @@ export class PRImpactAnalysisService {
         ? sanitizeTextContent(architecturePrinciples.map(p => `- ${p}`).join("\n"))
         : "None provided.";
       const safeDiff = sanitizeTextContent(diffBlocks.substring(0, 20000));
+      const safeDependencyPaths = sanitizeTextContent(JSON.stringify(impact.dependencyPaths, null, 2));
 
       const prompt = `You are a strict architectural and dependency analysis expert. Analyze the following Pull Request changes and identify the impact, structural drift, and risks.
 
@@ -54,6 +67,10 @@ ${safeChangedFiles}
 <DOWNSTREAM_DEPENDENTS>
 ${safeDownstream}
 </DOWNSTREAM_DEPENDENTS>
+
+<DEPENDENCY_PATHS>
+${safeDependencyPaths}
+</DEPENDENCY_PATHS>
 
 <ARCHITECTURE_PRINCIPLES>
 ${safePrinciples}
@@ -69,7 +86,8 @@ Produce a JSON output strictly conforming to the following structure:
   "affectedModules": ["module1", "module2"],
   "driftWarnings": ["warning1", "warning2"], // e.g. cross-layer violations, circular dependencies, breaking architecture principles
   "dependencyRisks": ["risk1", "risk2"], // e.g. heavily depended on utilities modified
-  "recommendations": ["recommendation1"] // what reviewers should focus on
+  "recommendations": ["recommendation1"], // what reviewers should focus on
+  "mermaidGraph": "graph TD\\n  A[\"file1\"] --> B[\"file2\"]\\n" // A Mermaid flowchart showing modified files and downstream dependents based on DEPENDENCY_PATHS. Note: Quote node labels containing special characters like slashes, parentheses, brackets (e.g. id[\"path/to/file\"]). Do NOT use HTML tags in node labels.
 }
 Do not include any Markdown formatting like \`\`\`json. Return ONLY valid JSON.
 `;
@@ -80,7 +98,8 @@ Do not include any Markdown formatting like \`\`\`json. Return ONLY valid JSON.
         affectedModules: [],
         driftWarnings: [],
         dependencyRisks: [],
-        recommendations: []
+        recommendations: [],
+        mermaidGraph: ""
       };
 
       try {
@@ -123,7 +142,8 @@ Do not include any Markdown formatting like \`\`\`json. Return ONLY valid JSON.
         affectedModules: parsedAI.affectedModules,
         driftWarnings: parsedAI.driftWarnings,
         dependencyRisks: parsedAI.dependencyRisks,
-        recommendations: parsedAI.recommendations
+        recommendations: parsedAI.recommendations,
+        mermaidGraph: parsedAI.mermaidGraph
       });
 
     } catch (e) {

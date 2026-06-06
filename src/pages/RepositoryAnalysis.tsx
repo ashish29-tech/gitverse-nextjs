@@ -3,7 +3,10 @@
 export const dynamic = "force-dynamic";
 
 import { useState, useEffect, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import axios from "axios";
+import Link from "next/link";
+
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { RepositoryOverview } from "@/components/repository/RepositoryOverview";
 import { FileStructure } from "@/components/repository/FileStructure";
@@ -28,10 +31,10 @@ import {
   Clock,
   Loader2,
   XCircle,
+  FileX2,
+  MessageSquare,
 } from "lucide-react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import axios from "axios";
+
 import { useToast } from "@/hooks/use-toast";
 import { buildApiUrl } from "@/services/apiConfig";
 import { Modal } from "@/components/ui/Modal";
@@ -42,7 +45,8 @@ type TabType =
   | "commits"
   | "contributors"
   | "mentor"
-  | "insights";
+  | "insights"
+  | "dead-code";
 
 interface Tab {
   id: TabType;
@@ -68,6 +72,11 @@ const tabs: Tab[] = [
     id: "insights",
     label: "Insights",
     icon: <BarChart3 className="h-4 w-4" />,
+  },
+  {
+    id: "dead-code",
+    label: "Dead Code",
+    icon: <FileX2 className="h-4 w-4" />,
   },
 ];
 
@@ -112,6 +121,7 @@ const StatusBadge = ({ status, isAnalyzing }: { status: string; isAnalyzing: boo
 export default function RepositoryAnalysis() {
   const params = useParams();
   const id = params?.id as string;
+
   const router = useRouter();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<TabType>("overview");
@@ -119,16 +129,26 @@ export default function RepositoryAnalysis() {
   const [loading, setLoading] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [job, setJob] = useState<any>(null);
+
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollingStartedAt = useRef<number | null>(null);
   const pollingJobRef = useRef<string | null>(null);
+  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     fetchRepository();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  useEffect(() => {
+    return () => {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     // Guard against dual-polling when the dependency array changes mid-cycle.
@@ -227,9 +247,14 @@ export default function RepositoryAnalysis() {
 
     try {
       const token = localStorage.getItem("gitverse_token");
-      const response = await axios.get(buildApiUrl(`/api/repositories/${id}`), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+
+      const response = await axios.get(
+        buildApiUrl(`/api/repositories/${id}`),
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
       const repo = response.data.repository || response.data;
       setRepository(repo);
 
@@ -259,8 +284,15 @@ export default function RepositoryAnalysis() {
       
       if (isColdStart) {
         setError("Waking up database... Please wait.");
-        // Auto-retry in 3 seconds. Do not set loading to false so spinner stays.
-        setTimeout(fetchRepository, 3000);
+
+        if (retryTimeoutRef.current) {
+          clearTimeout(retryTimeoutRef.current);
+        }
+
+        retryTimeoutRef.current = setTimeout(() => {
+          fetchRepository();
+        }, 3000);
+
         return;
       }
 
@@ -284,6 +316,7 @@ export default function RepositoryAnalysis() {
 
     try {
       const token = localStorage.getItem("gitverse_token");
+
       const response = await axios.get(
         buildApiUrl(`/api/analysis-jobs/${jobId}`),
         {
@@ -352,6 +385,7 @@ export default function RepositoryAnalysis() {
 
     try {
       const token = localStorage.getItem("gitverse_token");
+
       await axios.delete(buildApiUrl(`/api/repositories/${id}`), {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -363,7 +397,6 @@ export default function RepositoryAnalysis() {
 
       router.push("/dashboard");
     } catch (error: any) {
-      console.error("Error deleting repository:", error);
       toast({
         title: "Error",
         description:
@@ -398,6 +431,33 @@ export default function RepositoryAnalysis() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        {showDeleteDialog && (
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center">
+            <div className="glass p-6 rounded-lg max-w-sm mx-4">
+              <h2 className="text-lg font-semibold mb-2">Delete Repository?</h2>
+              <p className="text-sm text-muted-foreground mb-6">
+                This action cannot be undone. The repository and all its data will be permanently deleted.
+              </p>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setShowDeleteDialog(false)}
+                  disabled={isDeleting}
+                  className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteRepository}
+                  disabled={isDeleting}
+                  className="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white disabled:opacity-50"
+                >
+                  {isDeleting ? "Deleting..." : "Delete"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <div className="glass rounded-lg p-12 text-center space-y-4">
             <div className="flex justify-center">
@@ -436,6 +496,7 @@ export default function RepositoryAnalysis() {
               >
                 <ArrowLeft className="h-4 w-4 sm:h-5 sm:w-5" />
               </Link>
+
               <div className="flex-1 min-w-0">
                 <h1 className="text-2xl sm:text-3xl font-bold truncate">
                   {repository?.name || "Repository Analysis"}
@@ -459,7 +520,7 @@ export default function RepositoryAnalysis() {
                       {error}
                     </p>
                   )}
-                </div>
+              </div>
               </div>
               {/* Delete button only if repository exists */}
               {repository && (
@@ -546,7 +607,13 @@ export default function RepositoryAnalysis() {
                     {tabs.map((tab) => (
                       <button
                         key={tab.id}
-                        onClick={() => setActiveTab(tab.id)}
+                        onClick={() => {
+                          if (tab.id === "dead-code") {
+                            router.push(`/repo/${id}/dead-code`);
+                          } else {
+                            setActiveTab(tab.id);
+                          }
+                        }}
                         className={`
                           flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all duration-300 whitespace-nowrap w-full sm:w-auto justify-center
                           ${
@@ -560,6 +627,14 @@ export default function RepositoryAnalysis() {
                         <span>{tab.label}</span>
                       </button>
                     ))}
+                    <div className="w-px bg-white/10 mx-1 self-stretch" />
+                    <Link
+                      href={`/repo/${id}/chat`}
+                      className="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all duration-300 whitespace-nowrap w-full sm:w-auto justify-center hover:bg-white/10 text-muted-foreground hover:text-foreground"
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                      <span>Chat</span>
+                    </Link>
                   </div>
                 </div>
 

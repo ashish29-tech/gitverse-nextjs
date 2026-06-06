@@ -19,22 +19,32 @@ import {
   sanitizeTextContent,
   assembleChatPrompt,
 } from "@/lib/utils/promptSanitization";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/middleware/rateLimit";
 
 // Allowed roles in the conversation history
 const ALLOWED_MESSAGE_ROLES = new Set(["user", "model", "assistant"]);
 
-function parseKnowledgeArray(value: string): string[] {
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+function parseKnowledgeArray(value: any): string[] {
+  if (Array.isArray(value)) {
+    return value;
   }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }
 
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth(request);
+
+    const globalRl = await checkRateLimit(String(user.userId), RATE_LIMITS.AI_GLOBAL);
+    if (!globalRl.allowed) return rateLimitResponse(globalRl);
 
     const contentTypeError = validateContentType(request);
     if (contentTypeError) return contentTypeError;
